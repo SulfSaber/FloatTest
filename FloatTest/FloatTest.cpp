@@ -69,6 +69,7 @@ inline uint64_t ordered_to_doublebits(uint64_t ord) {
 
 static ID2D1Factory* g_pFactory = nullptr;
 static ID2D1HwndRenderTarget* g_pRenderTarget = nullptr;
+static ID2D1SolidColorBrush* g_pBrush = nullptr;
 static IDWriteFactory* g_pDWriteFactory = nullptr;
 static IDWriteTextFormat* g_pTextFormat = nullptr;
 
@@ -93,14 +94,6 @@ bool showDoubleMode = false;
 uint64_t maxPointsToDraw = 100000;
 
 // Brushes cache
-ID2D1SolidColorBrush* g_textBrush = nullptr;
-ID2D1SolidColorBrush* g_tickBrush = nullptr;
-ID2D1SolidColorBrush* g_defaultBrush = nullptr;
-
-// Float exponent brushes: index by biased exponent (0..255)
-ID2D1SolidColorBrush* g_floatBrushes[256] = { nullptr };
-// Double exponent brushes: create lazily keyed by biased exponent (0..2047)
-std::unordered_map<int, ID2D1SolidColorBrush*> g_doubleBrushes;
 
 // ----------------------- Color utility ------------------------------------
 
@@ -149,9 +142,7 @@ void CreateDeviceResources() {
         if (FAILED(hr)) return;
 
         // one-time brushes (kept until target recreated)
-        if (!g_defaultBrush) g_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &g_defaultBrush);
-        if (!g_tickBrush)    g_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::LightGray), &g_tickBrush);
-        if (!g_textBrush)    g_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &g_textBrush);
+        g_pRenderTarget->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), &g_pBrush);
 
         if (!g_pDWriteFactory) DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown**>(&g_pDWriteFactory));
         if (g_pDWriteFactory && !g_pTextFormat) {
@@ -169,13 +160,7 @@ void CreateDeviceResources() {
 }
 
 void ReleaseBrushes() {
-    for (int i = 0; i < 256; ++i) {
-        if (g_floatBrushes[i]) { g_floatBrushes[i]->Release(); g_floatBrushes[i] = nullptr; }
-    }
-    for (auto& kv : g_doubleBrushes) {
-        if (kv.second) { kv.second->Release(); }
-    }
-    g_doubleBrushes.clear();
+
 }
 
 void DiscardDeviceResources() {
@@ -183,9 +168,6 @@ void DiscardDeviceResources() {
     if (g_pRenderTarget) { g_pRenderTarget->Release(); g_pRenderTarget = nullptr; }
     if (g_pTextFormat) { g_pTextFormat->Release(); g_pTextFormat = nullptr; }
     if (g_pDWriteFactory) { g_pDWriteFactory->Release(); g_pDWriteFactory = nullptr; }
-    if (g_textBrush) { g_textBrush->Release(); g_textBrush = nullptr; }
-    if (g_tickBrush) { g_tickBrush->Release(); g_tickBrush = nullptr; }
-    if (g_defaultBrush) { g_defaultBrush->Release(); g_defaultBrush = nullptr; }
 }
 
 // draw small dot centered at (sx, sy)
@@ -206,6 +188,7 @@ inline void DrawDotFast(ID2D1HwndRenderTarget* rt, float sx, float sy, float rad
 void Render() {
 
     // Slowly animate zooming in
+    if (false)
     {
         double notchCount = 0.01f; // normally +/-1 per notch
         double baseFactor = 0.85; // smaller baseFactor = faster zoom
@@ -229,8 +212,8 @@ void Render() {
     float centerY = g_windowHeight / 2.0f;
 
     // draw baseline
-    if (g_tickBrush)
-        g_pRenderTarget->DrawLine(D2D1::Point2F(0, centerY), D2D1::Point2F((float)g_windowWidth, centerY), g_tickBrush, 1.0f);
+    g_pBrush->SetColor(D2D1::ColorF(D2D1::ColorF::Black));
+    g_pRenderTarget->DrawLine(D2D1::Point2F(0, centerY), D2D1::Point2F((float)g_windowWidth, centerY), g_pBrush, 1.0f);
 
     double left = viewCenter - viewHalfWidth;
     double right = viewCenter + viewHalfWidth;
@@ -264,7 +247,7 @@ void Render() {
             if (std::isnan(value) || std::isinf(value)) continue;
 
             float sx = worldToScreenX((double)value);
-            if (sx < -4.0f || sx > g_windowWidth + 4.0f) continue;
+            if (sx < -400.0f || sx > g_windowWidth + 4.0f) continue;
 
             double nextValue = std::nextafter(value, INFINITY);
             double ulp = nextValue - value;
@@ -285,32 +268,34 @@ void Render() {
 
                 std::wstring wtxt(txt.begin(), txt.end());   // convert to UTF-16
 
+                g_pBrush->SetColor(D2D1::ColorF(D2D1::ColorF::Black));
                 g_pRenderTarget->DrawTextW(
                     wtxt.c_str(),
                     (UINT32)wtxt.size(),
                     g_pTextFormat,
                     r,
-                    g_textBrush
+                    g_pBrush
                 );
 
                 float midY = centerY + 30.0f;
                 float leftX = sx;
                 float rightX = nextSx;
 
+                g_pBrush->SetColor(D2D1::ColorF(D2D1::ColorF::LightGray));
                 g_pRenderTarget->DrawLine(
                     D2D1::Point2F(leftX, midY),
                     D2D1::Point2F(rightX, midY),
-                    g_tickBrush, 1.5f);
+                    g_pBrush, 1.5f);
 
                 g_pRenderTarget->DrawLine(
                     D2D1::Point2F(leftX, midY - 5.0f),
                     D2D1::Point2F(leftX, midY + 5.0f),
-                    g_tickBrush, 1.5f);
+                    g_pBrush, 1.5f);
 
                 g_pRenderTarget->DrawLine(
                     D2D1::Point2F(rightX, midY - 5.0f),
                     D2D1::Point2F(rightX, midY + 5.0f),
-                    g_tickBrush, 1.5f);
+                    g_pBrush, 1.5f);
 
                 std::ostringstream ss2;
                 ss2 << std::setprecision(10) << ulp;
@@ -325,87 +310,39 @@ void Render() {
 
                 std::wstring wUlp(ulpText.begin(), ulpText.end());
 
+                g_pBrush->SetColor(D2D1::ColorF(D2D1::ColorF::Black));
                 g_pRenderTarget->DrawTextW(
                     wUlp.c_str(),
                     (UINT32)wUlp.size(),
                     g_pTextFormat,
                     r2,
-                    g_textBrush
+                    g_pBrush
                 );
             }
 
             uint32_t biased = (bits >> 23) & 0xFFu;
 
-            ID2D1SolidColorBrush* brush = g_floatBrushes[biased];
-            if (!brush) {
-                // map biased -> unbiased for color function; treat 0 (subnormal/zero) specially
+            {
                 int unbiased = (biased == 0) ? -127 : (int)biased - 127;
                 D2D1::ColorF c = bandColorFromExponent(unbiased, false);
-                g_pRenderTarget->CreateSolidColorBrush(c, &brush);
-                g_floatBrushes[biased] = brush;
+                g_pBrush->SetColor(c);
             }
 
-            DrawDotFast(g_pRenderTarget, sx, centerY, dotRadius, brush);
-        }
-    }
-    else {
-        double leftD = std::max(left, -std::numeric_limits<double>::max());
-        double rightD = std::min(right, std::numeric_limits<double>::max());
-        if (!(leftD <= rightD)) goto REND_END;
-    
-        uint64_t leftBits = double_to_u64(leftD);
-        uint64_t rightBits = double_to_u64(rightD);
-        uint64_t leftOrd = double_to_ordered(leftBits);
-        uint64_t rightOrd = double_to_ordered(rightBits);
-        if (leftOrd > rightOrd) std::swap(leftOrd, rightOrd);
-    
-        uint64_t totalPoints = rightOrd - leftOrd + 1ull;
-        uint64_t step = 1;
-        if (totalPoints > maxPointsToDraw) {
-            step = (totalPoints + maxPointsToDraw - 1) / maxPointsToDraw;
-        }
-    
-        float dotRadius = 10.f;
-    
-        for (uint64_t ord = leftOrd; ord <= rightOrd; ord += step) {
-            uint64_t bits = ordered_to_doublebits(ord);
-            double value = u64_to_double(bits);
-            if (std::isnan(value) || std::isinf(value)) continue;
-    
-            float sx = worldToScreenX(value);
-            if (sx < -4.0f || sx > g_windowWidth + 4.0f) continue;
-    
-            // biased exponent bits 52..62 (0..2047)
-            int biased = int((bits >> 52) & 0x7FFull);
-    
-            ID2D1SolidColorBrush* brush = nullptr;
-            auto it = g_doubleBrushes.find(biased);
-            if (it == g_doubleBrushes.end()) {
-                int unbiased = (biased == 0) ? -1023 : biased - 1023;
-                D2D1::ColorF c = bandColorFromExponent(unbiased, true);
-                if (SUCCEEDED(g_pRenderTarget->CreateSolidColorBrush(c, &brush))) {
-                    g_doubleBrushes.emplace(biased, brush);
-                }
-                else {
-                    brush = g_defaultBrush;
-                }
-            }
-            else brush = it->second;
-    
-            DrawDotFast(g_pRenderTarget, sx, centerY, dotRadius, brush ? brush : g_defaultBrush);
+            DrawDotFast(g_pRenderTarget, sx, centerY, dotRadius, g_pBrush);
         }
     }
 
 REND_END:
     // Draw UI text
-    if (g_pTextFormat && g_textBrush) {
+    if (g_pTextFormat) {
         std::wostringstream ws;
         ws << L"Mode: " << (showDoubleMode ? L"double (64-bit)" : L"float (32-bit)");
         ws << L"    Center: " << std::fixed << std::setprecision(6) << viewCenter;
         ws << L"    HalfWidth: " << std::scientific << std::setprecision(3) << viewHalfWidth;
         std::wstring s = ws.str();
         D2D1_RECT_F layout = D2D1::RectF(4, 4, (float)g_windowWidth - 4, 40);
-        g_pRenderTarget->DrawTextW(s.c_str(), (UINT32)s.size(), g_pTextFormat, layout, g_textBrush);
+        g_pBrush->SetColor(D2D1::ColorF(D2D1::ColorF::Black));
+        g_pRenderTarget->DrawTextW(s.c_str(), (UINT32)s.size(), g_pTextFormat, layout, g_pBrush);
     }
 
     HRESULT hr = g_pRenderTarget->EndDraw();
